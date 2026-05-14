@@ -1,12 +1,12 @@
 # Microservices Performance Analysis 📊
 
-A hands-on distributed systems benchmarking project that evaluates how a production-grade Kubernetes microservices deployment behaves under load — measuring CPU, memory, and network performance across single-node and multi-node cloud architectures.
+A hands-on distributed systems benchmarking project that evaluates how a production-grade Kubernetes microservices deployment behaves under load — measuring CPU, memory, and network performance across single-node, multi-node, and multi-cloud architectures.
 
 ---
 
 ## 🧭 Project Overview
 
-This project progressively scales a microservices workload from a **single Azure VM** to a **multi-node Kubernetes cluster**, benchmarking performance at each stage using real observability tooling. The goal is to quantify the gains from horizontal scaling under controlled, reproducible load conditions.
+This project progressively scales a microservices workload from a **single Azure VM** to a **multi-node Kubernetes cluster**, and finally to a **multi-cloud topology spanning Azure and GCP**, benchmarking performance at each stage using real observability tooling. The goal is to quantify the gains from horizontal and geographic scaling under controlled, reproducible load conditions.
 
 **Load Levels Tested:** Low (10 users) · Medium (50 users) · High (200 users)
 
@@ -26,6 +26,12 @@ This project progressively scales a microservices workload from a **single Azure
 - CPU pressure on primary node dropped significantly
 - Inter-node network traffic (private VNet) confirmed via Grafana node exporter
 
+### Phase 3 — Multi-Cloud Deployment (Azure + GCP)
+- K3s cluster spanned across two cloud providers over public WAN
+- Manager node on Azure; edge/worker node on Google Cloud Platform (GCP)
+- Cross-cloud pod communication tunneled via Flannel VXLAN overlay network
+- Frontend pinned to GCP node via Kubernetes NodeSelector to simulate edge serving
+
 ---
 
 ## 🛠️ Tech Stack
@@ -38,6 +44,8 @@ This project progressively scales a microservices workload from a **single Azure
 | **Prometheus** | Time-series metrics scraping (CPU, memory, network) |
 | **Grafana** | Dashboard visualization connected to Prometheus |
 | **Locust** | Python-based distributed load testing tool |
+| **Azure** | Primary cloud — manager node host |
+| **GCP** | Secondary cloud — worker/edge node host |
 
 ---
 
@@ -46,111 +54,70 @@ This project progressively scales a microservices workload from a **single Azure
 ```
 microservices-performance-analysis/
 ├── README.md
-├── locustfile.py                        # Load test script defining HTTP user behavior
+├── locustfile.py
 ├── locust-reports/
 │   ├── Locust_Single_Node_Low_Load.html
 │   ├── Locust_Single_Node_Medium_Load.html
 │   ├── Locust_Single_Node_High_Load.html
 │   ├── Locust_Multi_Node_Low_Load.html
 │   ├── Locust_Multi_Node_Medium_Load.html
-│   └── Locust_Multi_Node_High_Load.html
+│   ├── Locust_Multi_Node_High_Load.html
+│   ├── Locust_Multi_Cloud_Low_Load.html
+│   ├── Locust_Multi_Cloud_Medium_Load.html
+│   └── Locust_Multi_Cloud_High_Load.html
 └── images/
     └── benchmarks/
-        ├── single-low-cpu.png
-        ├── single-low-cpu-quota.png
-        ├── single-low-memory.png
-        ├── single-low-memory-quota.png
-        ├── single-low-network.png
-        ├── single-low-dashboard.png
-        ├── single-medium-cpu.png
-        ├── single-medium-cpu-quota.png
-        ├── single-medium-memory.png
-        ├── single-medium-memory-quota.png
-        ├── single-medium-network.png
-        ├── single-medium-dashboard.png
-        ├── single-high-cpu.png
-        ├── single-high-cpu-quota.png
-        ├── single-high-memory.png
-        ├── single-high-memory-quota.png
-        ├── single-high-network.png
-        ├── single-high-dashboard.png
-        ├── multi-low-cpu.png
-        ├── multi-low-cpu-quota.png
-        ├── multi-low-memory.png
-        ├── multi-low-memory-quota.png
-        ├── multi-low-network.png
-        ├── multi-low-dashboard.png
-        ├── multi-medium-cpu.png
-        ├── multi-medium-cpu-quota.png
-        ├── multi-medium-memory.png
-        ├── multi-medium-memory-quota.png
-        ├── multi-medium-network.png
-        ├── multi-medium-dashboard.png
-        ├── multi-high-cpu.png
-        ├── multi-high-cpu-quota.png
-        ├── multi-high-memory.png
-        ├── multi-high-memory-quota.png
-        ├── multi-high-network.png
-        └── multi-high-dashboard.png
+        ├── single-low-*.png          (6 files)
+        ├── single-medium-*.png       (6 files)
+        ├── single-high-*.png         (6 files)
+        ├── multi-low-*.png           (6 files)
+        ├── multi-medium-*.png        (6 files)
+        ├── multi-high-*.png          (6 files)
+        ├── Multicloud-Low-*.png      (5 files)
+        ├── Multicloud-Medium-*.png   (5 files)
+        └── Multicloud-High-*.png     (5 files)
 ```
 
 ---
 
 ## 🚀 Setup & Reproduction
 
-> **Prerequisites:** Azure account with VM creation permissions · Windows machine with PowerShell · SSH key downloaded from Azure
+> **Prerequisites:** Azure + GCP accounts · Windows machine with PowerShell · SSH keys for each cloud
 
 ### Step 1 — SSH into Your Azure VM (Windows PowerShell)
 
 Windows OpenSSH strictly requires private key files to be protected from group access. Run PowerShell **as Administrator**:
 
 ```powershell
-# Define path to your downloaded Azure key
 $KeyPath = "$env:USERPROFILE\Downloads\azure-key.pem"
-
-# Strip all inherited folder permissions
 icacls $KeyPath /inheritance:r
-
-# Grant read-only access to your current Windows user only
 icacls $KeyPath /grant:r "$($env:USERNAME):R"
-
-# Connect to your primary VM
 ssh -i $KeyPath azureuser@<MANAGER_PUBLIC_IP>
 ```
 
 ### Step 2 — Install K3s (on the Azure VM)
 
 ```bash
-# Install K3s control plane
 curl -sfL https://get.k3s.io | sh -
-
-# Verify cluster is up
 sudo k3s kubectl get nodes
 ```
 
 ### Step 3 — Deploy the Boutique App (11 Microservices)
 
 ```bash
-# Apply all deployment and service manifests
 sudo k3s kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/microservices-demo/main/release/kubernetes-manifests.yaml
-
-# Watch pods until all show "Running"
 sudo k3s kubectl get pods -o wide --watch
 ```
 
 ### Step 4 — Install Helm & Deploy the Observability Stack
 
 ```bash
-# Install Helm
 curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
 chmod 700 get_helm.sh
 ./get_helm.sh
 
-# Add Prometheus community repo
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 helm repo update
-
-# Create monitoring namespace and deploy the full stack
 sudo k3s kubectl create namespace monitoring
 sudo k3s helm install observability prometheus-community/kube-prometheus-stack --namespace monitoring
 ```
@@ -164,13 +131,13 @@ sudo k3s kubectl get secret --namespace monitoring observability-grafana \
 
 ### Step 5 — Expose Services & Tunnel Locally
 
-**On the Azure VM** — forward both services to all interfaces (run in background):
+**On the Azure VM:**
 ```bash
 sudo k3s kubectl port-forward svc/frontend 8080:80 --address 0.0.0.0 &
 sudo k3s kubectl port-forward svc/observability-grafana 3000:80 -n monitoring --address 0.0.0.0 &
 ```
 
-**On your local Windows machine** — open a new PowerShell window and create the SSH tunnel:
+**On your local Windows machine:**
 ```powershell
 ssh -i "$env:USERPROFILE\Downloads\azure-key.pem" `
     -L 8080:localhost:8080 `
@@ -185,60 +152,74 @@ ssh -i "$env:USERPROFILE\Downloads\azure-key.pem" `
 | Grafana | http://localhost:3000 |
 | Locust UI | http://localhost:8089 |
 
-### Step 6 — Install Locust & Run Load Tests
+### Step 6 — Run Load Tests
 
 ```bash
 sudo apt-get install -y python3-pip
 pip3 install locust
-
-# Start the Locust web UI (access at http://localhost:8089)
 locust -f locustfile.py
 ```
 
-**Or run headless directly from CLI:**
-
+**Headless CLI:**
 ```bash
-# Low Load — 10 users, 2/sec ramp-up, 3 minutes
-locust -f locustfile.py --headless -u 10 -r 2 --run-time 3m \
-  --host=http://localhost:8080 --csv=benchmark_low_load
-
-# Medium Load — 50 users, 5/sec ramp-up, 3 minutes
-locust -f locustfile.py --headless -u 50 -r 5 --run-time 3m \
-  --host=http://localhost:8080 --csv=benchmark_medium_load
-
-# High Load — 200 users, 10/sec ramp-up, 3 minutes
-locust -f locustfile.py --headless -u 200 -r 10 --run-time 3m \
-  --host=http://localhost:8080 --csv=benchmark_high_stress
+locust -f locustfile.py --headless -u 10 -r 2 --run-time 3m --host=http://localhost:8080 --csv=benchmark_low_load
+locust -f locustfile.py --headless -u 50 -r 5 --run-time 3m --host=http://localhost:8080 --csv=benchmark_medium_load
+locust -f locustfile.py --headless -u 200 -r 10 --run-time 3m --host=http://localhost:8080 --csv=benchmark_high_stress
 ```
 
 ---
 
 ## 📈 Scaling to Multi-Node (Phase 2)
 
-### Step 1 — Get the Cluster Join Token (on manager VM)
-
 ```bash
+# On manager — get join token
 sudo cat /var/lib/rancher/k3s/server/node-token
-```
 
-### Step 2 — Join the Worker Node (on worker-node-1)
-
-```bash
+# On worker-node-1 — join the cluster
 curl -sfL https://get.k3s.io | \
   K3S_URL=https://<MANAGER_PRIVATE_IP>:6443 \
   K3S_TOKEN=<COPIED_NODE_TOKEN> sh -
+
+# On manager — force rescheduling
+sudo k3s kubectl get nodes
+sudo k3s kubectl delete pods --all
+sudo k3s kubectl get pods -o wide
 ```
 
-### Step 3 — Force Pod Redistribution (back on manager)
+---
 
+## ☁️ Multi-Cloud Setup (Phase 3 — Azure + GCP)
+
+### Firewall Ports to Open (on both clouds)
+
+| Port | Protocol | Purpose |
+|------|----------|---------|
+| 6443 | TCP | K3s API Server |
+| 10250 | TCP | Kubelet metrics |
+| 8472 | UDP | Flannel VXLAN overlay (cross-cloud pod networking) |
+
+### Join GCP Node to Azure Cluster
+
+SSH into the GCP VM and run:
 ```bash
-# Verify both nodes show "Ready"
-sudo k3s kubectl get nodes
+curl -sfL https://get.k3s.io | \
+  K3S_URL=https://<AZURE_MANAGER_PUBLIC_IP>:6443 \
+  K3S_TOKEN=<COPIED_NODE_TOKEN> sh -s - \
+  --node-external-ip=<GCP_VM_PUBLIC_IP>
+```
 
-# Delete all pods to trigger automatic rescheduling across both nodes
-sudo k3s kubectl delete pods --all
+### Pin Frontend to GCP (Edge Serving)
 
-# Confirm pods are now spread across both VMs
+Run on the Azure manager:
+```bash
+# Label the GCP node as edge
+sudo k3s kubectl label nodes <GCP_NODE_NAME> node-role.kubernetes.io/edge=true
+
+# Pin frontend deployment to the edge node
+sudo k3s kubectl patch deployment frontend -p \
+  '{"spec": {"template": {"spec": {"nodeSelector": {"node-role.kubernetes.io/edge": "true"}}}}}'
+
+# Confirm frontend pods migrated to GCP node
 sudo k3s kubectl get pods -o wide
 ```
 
@@ -246,7 +227,7 @@ sudo k3s kubectl get pods -o wide
 
 ## 📊 Benchmark Results
 
-### Phase 1: Single-Node
+### Phase 1: Single-Node (Azure)
 
 #### Low Load (10 Users)
 | Metric | Screenshot |
@@ -280,7 +261,7 @@ sudo k3s kubectl get pods -o wide
 
 ---
 
-### Phase 2: Multi-Node
+### Phase 2: Multi-Node (Azure)
 
 #### Low Load (10 Users)
 | Metric | Screenshot |
@@ -314,29 +295,67 @@ sudo k3s kubectl get pods -o wide
 
 ---
 
+### Phase 3: Multi-Cloud (Azure + GCP)
+
+#### Low Load (10 Users)
+| Metric | Screenshot |
+|--------|-----------|
+| CPU Usage | ![](images/benchmarks/Multicloud-Low-CPU.png) |
+| CPU Quota | ![](images/benchmarks/Multicloud-Low-CPU-Quota.png) |
+| Memory Usage | ![](images/benchmarks/Multicloud-Low-Memory.png) |
+| Memory Quota | ![](images/benchmarks/Multicloud-Low-Memory-Quota.png) |
+| Network I/O | ![](images/benchmarks/Multicloud-Low-Network.png) |
+| Locust Dashboard | ![](images/benchmarks/Multicloud-Low-Dashboard.png) |
+
+#### Medium Load (50 Users)
+| Metric | Screenshot |
+|--------|-----------|
+| CPU Usage | ![](images/benchmarks/Multicloud-Medium-CPU.png) |
+| CPU Quota | ![](images/benchmarks/Multicloud-Medium-CPU-Quota.png) |
+| Memory Usage | ![](images/benchmarks/Multicloud-Medium-Memory.png) |
+| Memory Quota | ![](images/benchmarks/Multicloud-Medium-Memory-Quota.png) |
+| Network I/O | ![](images/benchmarks/Multicloud-Medium-Network.png) |
+| Locust Dashboard | ![](images/benchmarks/Multicloud-Medium-Dashboard.png) |
+
+#### High Load (200 Users)
+| Metric | Screenshot |
+|--------|-----------|
+| CPU Usage | ![](images/benchmarks/Multicloud-High-CPU.png) |
+| CPU Quota | ![](images/benchmarks/Multicloud-High-CPU-Quota.png) |
+| Memory Usage | ![](images/benchmarks/Multicloud-High-Memory.png) |
+| Memory Quota | ![](images/benchmarks/Multicloud-High-Memory-Quota.png) |
+| Network I/O | ![](images/benchmarks/Multicloud-High-Network.png) |
+| Locust Dashboard | ![](images/benchmarks/Multicloud-High-Dashboard.png) |
+
+---
+
 ## 📄 Locust Reports
 
-Full HTML reports (with request stats, response times, failures, and charts) are available in the [`locust-reports/`](locust-reports/) folder.
+Full HTML reports are available in the [`locust-reports/`](locust-reports/) folder.
 
 | Phase | Load | Report |
 |-------|------|--------|
-| Single-Node | Low (10 users) | [Locust_Single_Node_Low_Load.html](locust-reports/Locust_Single_Node_Low_Load.html) |
-| Single-Node | Medium (50 users) | [Locust_Single_Node_Medium_Load.html](locust-reports/Locust_Single_Node_Medium_Load.html) |
-| Single-Node | High (200 users) | [Locust_Single_Node_High_Load.html](locust-reports/Locust_Single_Node_High_Load.html) |
-| Multi-Node | Low (10 users) | [Locust_Multi_Node_Low_Load.html](locust-reports/Locust_Multi_Node_Low_Load.html) |
-| Multi-Node | Medium (50 users) | [Locust_Multi_Node_Medium_Load.html](locust-reports/Locust_Multi_Node_Medium_Load.html) |
-| Multi-Node | High (200 users) | [Locust_Multi_Node_High_Load.html](locust-reports/Locust_Multi_Node_High_Load.html) |
+| Single-Node | Low | [Locust_Single_Node_Low_Load.html](locust-reports/Locust_Single_Node_Low_Load.html) |
+| Single-Node | Medium | [Locust_Single_Node_Medium_Load.html](locust-reports/Locust_Single_Node_Medium_Load.html) |
+| Single-Node | High | [Locust_Single_Node_High_Load.html](locust-reports/Locust_Single_Node_High_Load.html) |
+| Multi-Node | Low | [Locust_Multi_Node_Low_Load.html](locust-reports/Locust_Multi_Node_Low_Load.html) |
+| Multi-Node | Medium | [Locust_Multi_Node_Medium_Load.html](locust-reports/Locust_Multi_Node_Medium_Load.html) |
+| Multi-Node | High | [Locust_Multi_Node_High_Load.html](locust-reports/Locust_Multi_Node_High_Load.html) |
+| Multi-Cloud | Low | [Locust_Multi_Cloud_Low_Load.html](locust-reports/Locust_Multi_Cloud_Low_Load.html) |
+| Multi-Cloud | Medium | [Locust_Multi_Cloud_Medium_Load.html](locust-reports/Locust_Multi_Cloud_Medium_Load.html) |
+| Multi-Cloud | High | [Locust_Multi_Cloud_High_Load.html](locust-reports/Locust_Multi_Cloud_High_Load.html) |
 
-> **Note:** GitHub doesn't render HTML files inline — download and open them in a browser for the full interactive report.
+> **Note:** GitHub doesn't render HTML files inline — download and open in a browser for the full interactive report.
 
 ---
 
 ## 🔑 Key Findings
 
 - **Horizontal scaling works**: Adding a second node significantly reduced CPU pressure on the primary node under identical load
-- **Network traffic is proof**: Grafana confirmed high inter-node packet transfer between the two VMs' private IPs, validating real cross-server pod communication
-- **K3s is production-ready**: The lightweight distribution handled full workload scheduling and pod redistribution without any manual intervention
-- **Observability is essential**: Without Prometheus + Grafana, the CPU reduction after scaling would be invisible — the dashboards made the impact quantifiable
+- **Multi-cloud is viable**: Spanning the cluster across Azure and GCP over public WAN using Flannel VXLAN worked reliably, with inter-cloud pod communication confirmed via Grafana
+- **Network traffic is proof**: High inter-node packet transfer rates between cloud providers confirmed real cross-cloud pod communication
+- **K3s is production-ready**: The lightweight distribution handled full workload scheduling, rescheduling, and cross-cloud pod distribution without manual intervention
+- **Observability is essential**: Without Prometheus + Grafana, performance differences across phases would be invisible
 
 ---
 
@@ -349,7 +368,7 @@ sudo fuser -k 3000/tcp
 ```
 
 **Deallocating VMs to stop billing:**
-Azure Portal → Virtual Machines → select instance → **Stop** → confirm state shows `Stopped (deallocated)`
+Azure Portal / GCP Console → Virtual Machines → select instance → **Stop** → confirm deallocated state
 
 ---
 
@@ -357,7 +376,7 @@ Azure Portal → Virtual Machines → select instance → **Stop** → confirm s
 
 - [x] Phase 1: Single-node Azure deployment
 - [x] Phase 2: Multi-node Azure cluster
-- [ ] Phase 3: Multi-cloud deployment (Azure + GCP/AWS)
+- [x] Phase 3: Multi-cloud deployment (Azure + GCP)
 - [ ] Phase 4: Edge topology benchmarking
 
 ---
