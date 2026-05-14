@@ -1,12 +1,12 @@
 # Microservices Performance Analysis 📊
 
-A hands-on distributed systems benchmarking project that evaluates how a production-grade Kubernetes microservices deployment behaves under load — measuring CPU, memory, and network performance across single-node, multi-node, and multi-cloud architectures.
+A hands-on distributed systems benchmarking project that evaluates how a production-grade Kubernetes microservices deployment behaves under load — measuring CPU, memory, and network performance across single-node, multi-node, multi-cloud, and edge architectures.
 
 ---
 
 ## 🧭 Project Overview
 
-This project progressively scales a microservices workload from a **single Azure VM** to a **multi-node Kubernetes cluster**, and finally to a **multi-cloud topology spanning Azure and GCP**, benchmarking performance at each stage using real observability tooling. The goal is to quantify the gains from horizontal and geographic scaling under controlled, reproducible load conditions.
+This project progressively scales a microservices workload from a **single Azure VM** to a **multi-node Kubernetes cluster**, then to a **multi-cloud topology spanning Azure and GCP**, and finally to a **real-world edge deployment** where a frontend is pinned to an external node joining over the public internet. Each phase is benchmarked using real observability tooling.
 
 **Load Levels Tested:** Low (10 users) · Medium (50 users) · High (200 users)
 
@@ -28,9 +28,23 @@ This project progressively scales a microservices workload from a **single Azure
 
 ### Phase 3 — Multi-Cloud Deployment (Azure + GCP)
 - K3s cluster spanned across two cloud providers over public WAN
-- Manager node on Azure; edge/worker node on Google Cloud Platform (GCP)
+- Manager node on Azure; worker node on Google Cloud Platform (GCP)
 - Cross-cloud pod communication tunneled via Flannel VXLAN overlay network
 - Frontend pinned to GCP node via Kubernetes NodeSelector to simulate edge serving
+
+### Phase 4 — Edge Deployment (External Node over Public Internet)
+- A third node (`edge-node`) run by a collaborator joined the cluster over the public internet
+- No VPN or private network — the edge node connected directly to the manager's public IP on port 6443
+- Frontend deployment patched with a NodeSelector to run exclusively on `edge-node`
+- Kubernetes automatically terminated frontend pods on internal nodes and rescheduled them on the edge
+- Demonstrates real-world CDN-style edge serving using only K3s and Kubernetes primitives
+
+**Why the frontend runs multiple replicas (and why that matters on the edge):**
+
+Unlike backend services which run as a single pod, the Google Boutique demo configures the `frontend` with multiple replicas by design. Pinning these replicas to the edge node gives two concrete benefits:
+
+- **Load Balancing** — Incoming traffic is automatically distributed across all frontend replicas. Under high concurrency, no single pod bears the full load, preventing crashes at the user-facing entry point.
+- **High Availability** — If one frontend pod dies unexpectedly, the remaining replicas continue serving requests while Kubernetes silently rebuilds the failed one. The website stays online with zero manual intervention.
 
 ---
 
@@ -44,8 +58,9 @@ This project progressively scales a microservices workload from a **single Azure
 | **Prometheus** | Time-series metrics scraping (CPU, memory, network) |
 | **Grafana** | Dashboard visualization connected to Prometheus |
 | **Locust** | Python-based distributed load testing tool |
-| **Azure** | Primary cloud — manager node host |
-| **GCP** | Secondary cloud — worker/edge node host |
+| **Azure** | Primary cloud — manager node host (Phases 1–4) |
+| **GCP** | Secondary cloud — worker node host (Phase 3) |
+| **External VM** | Collaborator machine — edge node host (Phase 4) |
 
 ---
 
@@ -67,15 +82,17 @@ microservices-performance-analysis/
 │   └── Locust_Multi_Cloud_High_Load.html
 └── images/
     └── benchmarks/
-        ├── single-low-*.png          (6 files)
-        ├── single-medium-*.png       (6 files)
-        ├── single-high-*.png         (6 files)
-        ├── multi-low-*.png           (6 files)
-        ├── multi-medium-*.png        (6 files)
-        ├── multi-high-*.png          (6 files)
-        ├── Multicloud-Low-*.png      (5 files)
-        ├── Multicloud-Medium-*.png   (5 files)
-        └── Multicloud-High-*.png     (5 files)
+        ├── single-low-*.png             (6 files)
+        ├── single-medium-*.png          (6 files)
+        ├── single-high-*.png            (6 files)
+        ├── multi-low-*.png              (6 files)
+        ├── multi-medium-*.png           (6 files)
+        ├── multi-high-*.png             (6 files)
+        ├── Multicloud-Low-*.png         (5 files)
+        ├── Multicloud-Medium-*.png      (5 files)
+        ├── Multicloud-High-*.png        (5 files)
+        ├── edge-nodes-registered.png    (kubectl get nodes showing all 3 nodes)
+        └── edge-pods-distribution.png   (kubectl get pods -o wide showing frontend on edge-node)
 ```
 
 ---
@@ -180,7 +197,7 @@ curl -sfL https://get.k3s.io | \
   K3S_URL=https://<MANAGER_PRIVATE_IP>:6443 \
   K3S_TOKEN=<COPIED_NODE_TOKEN> sh -
 
-# On manager — force rescheduling
+# On manager — verify and force rescheduling
 sudo k3s kubectl get nodes
 sudo k3s kubectl delete pods --all
 sudo k3s kubectl get pods -o wide
@@ -200,7 +217,6 @@ sudo k3s kubectl get pods -o wide
 
 ### Join GCP Node to Azure Cluster
 
-SSH into the GCP VM and run:
 ```bash
 curl -sfL https://get.k3s.io | \
   K3S_URL=https://<AZURE_MANAGER_PUBLIC_IP>:6443 \
@@ -208,20 +224,73 @@ curl -sfL https://get.k3s.io | \
   --node-external-ip=<GCP_VM_PUBLIC_IP>
 ```
 
-### Pin Frontend to GCP (Edge Serving)
+### Pin Frontend to GCP Node
 
-Run on the Azure manager:
 ```bash
-# Label the GCP node as edge
 sudo k3s kubectl label nodes <GCP_NODE_NAME> node-role.kubernetes.io/edge=true
-
-# Pin frontend deployment to the edge node
 sudo k3s kubectl patch deployment frontend -p \
   '{"spec": {"template": {"spec": {"nodeSelector": {"node-role.kubernetes.io/edge": "true"}}}}}'
-
-# Confirm frontend pods migrated to GCP node
 sudo k3s kubectl get pods -o wide
 ```
+
+---
+
+## 🌐 Edge Deployment (Phase 4 — External Node over Public Internet)
+
+This phase connects a completely external node (run by a collaborator on a separate machine) to the cluster over the public internet — no VPN, no private network.
+
+### Step 1 — Open Firewall Port on Azure
+
+In the Azure Portal, navigate to `benchmark-vm` → **Networking** → **Add inbound port rule**:
+
+| Setting | Value |
+|---------|-------|
+| Destination port | `6443` |
+| Protocol | TCP |
+| Name | `Allow-K3s-Edge` |
+
+### Step 2 — Get the Cluster Join Token (on manager)
+
+```bash
+sudo cat /var/lib/rancher/k3s/server/node-token
+```
+
+### Step 3 — Join the Edge Node (on the external/collaborator machine)
+
+The collaborator SSHs into `edge-node` and runs:
+
+```bash
+curl -sfL https://get.k3s.io | \
+  K3S_URL=https://<MANAGER_PUBLIC_IP>:6443 \
+  K3S_TOKEN=<COPIED_NODE_TOKEN> sh -
+```
+
+> Note: Unlike Phase 2 which used a private IP, this uses the **public IP** — the edge node is outside the network entirely.
+
+### Step 4 — Label the Edge Node (on manager)
+
+```bash
+# Verify edge-node appears as Ready
+sudo k3s kubectl get nodes
+
+# Tag it as the edge device
+sudo k3s kubectl label nodes edge-node node-role.kubernetes.io/edge=true
+```
+
+### Step 5 — Pin Frontend to the Edge Node (on manager)
+
+```bash
+sudo k3s kubectl patch deployment frontend -p \
+  '{"spec": {"template": {"spec": {"nodeSelector": {"node-role.kubernetes.io/edge": "true"}}}}}'
+```
+
+### Step 6 — Verify Frontend Migrated to Edge
+
+```bash
+sudo k3s kubectl get pods -o wide
+```
+
+All `frontend-*` pods should now show `edge-node` under the NODE column.
 
 ---
 
@@ -329,6 +398,17 @@ sudo k3s kubectl get pods -o wide
 
 ---
 
+### Phase 4: Edge Deployment
+
+> No load testing was performed in this phase. The goal was to validate cross-internet node joining and frontend pod migration to the edge node.
+
+| What | Screenshot |
+|------|-----------|
+| All 3 nodes registered and Ready | ![](images/benchmarks/edge-nodes-registered.png) |
+| Frontend pods running on edge-node | ![](images/benchmarks/edge-pods-distribution.png) |
+
+---
+
 ## 📄 Locust Reports
 
 Full HTML reports are available in the [`locust-reports/`](locust-reports/) folder.
@@ -353,8 +433,9 @@ Full HTML reports are available in the [`locust-reports/`](locust-reports/) fold
 
 - **Horizontal scaling works**: Adding a second node significantly reduced CPU pressure on the primary node under identical load
 - **Multi-cloud is viable**: Spanning the cluster across Azure and GCP over public WAN using Flannel VXLAN worked reliably, with inter-cloud pod communication confirmed via Grafana
-- **Network traffic is proof**: High inter-node packet transfer rates between cloud providers confirmed real cross-cloud pod communication
-- **K3s is production-ready**: The lightweight distribution handled full workload scheduling, rescheduling, and cross-cloud pod distribution without manual intervention
+- **Edge deployment works over raw internet**: An external node joined the cluster over the public internet with zero private networking — just a firewall port and a join token
+- **Kubernetes NodeSelector is a powerful edge primitive**: Pinning the frontend to `edge-node` caused Kubernetes to automatically migrate all frontend pods with no manual restarts
+- **Replicas make the edge resilient**: Running multiple frontend replicas on the edge node means traffic is load-balanced across all of them, and if any single pod fails, the others keep serving users while Kubernetes self-heals in the background
 - **Observability is essential**: Without Prometheus + Grafana, performance differences across phases would be invisible
 
 ---
@@ -377,7 +458,7 @@ Azure Portal / GCP Console → Virtual Machines → select instance → **Stop**
 - [x] Phase 1: Single-node Azure deployment
 - [x] Phase 2: Multi-node Azure cluster
 - [x] Phase 3: Multi-cloud deployment (Azure + GCP)
-- [ ] Phase 4: Edge topology benchmarking
+- [x] Phase 4: Edge topology — external node over public internet
 
 ---
 
